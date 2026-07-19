@@ -1,0 +1,52 @@
+services:
+  gateway:
+    build: ./gateway
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
+    depends_on:
+      whisper:
+        condition: service_healthy
+      voicevox:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  whisper:
+    build:
+      context: ./infrastructure/whisper
+      args:
+        WHISPER_CPP_VERSION: v1.8.6
+    environment:
+      WHISPER_MODEL: ${STT_MODEL:-small}
+      STT_LANGUAGE: ${STT_LANGUAGE:-ja}
+    volumes:
+      - whisper_models:/models
+    expose: ["8080"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+      start_period: 10m
+    restart: unless-stopped
+
+  voicevox:
+    image: voicevox/voicevox_engine:cpu-arm64-0.25.1
+    expose: ["50021"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:50021/version"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 2m
+    restart: unless-stopped
+
+volumes:
+  whisper_models:
