@@ -1,13 +1,29 @@
+import re
+
 import httpx
 
 from app.clients.base import Message
 from app.errors import ErrorCode, GatewayError
 
 
-SYSTEM_PROMPT = """あなたはリアルタイム音声会話用のアシスタントです。
-日本語で、原則2〜4文以内の簡潔で聞き取りやすい自然な回答をしてください。
-Markdownの表や複雑な箇条書き、長いURLやコードは避けてください。
-不明な点は推測せず、その旨を簡潔に伝えてください。"""
+SYSTEM_PROMPT = """あなたはリアルタイム音声会話用の日本語アシスタントです。
+出力するのは、利用者へそのまま読み上げる最終回答だけです。
+
+分析、推論、思考過程、発話内容の要約、意図の説明、回答候補、
+番号付きリスト、回答方針、前置きは絶対に出力しないでください。
+内部で検討しても、その内容を回答本文に含めないでください。
+
+自然で簡潔な日本語で、原則1〜2文で回答してください。
+不明な点は推測せず、短く確認してください。
+Markdown、箇条書き、長いURL、コードは使わないでください。"""
+
+_REASONING_BLOCK = re.compile(r"<(?:think|analysis)>.*?</(?:think|analysis)>\s*", re.IGNORECASE | re.DOTALL)
+_UNCLOSED_REASONING_BLOCK = re.compile(r"<(?:think|analysis)>.*", re.IGNORECASE | re.DOTALL)
+
+
+def strip_reasoning_blocks(text: str) -> str:
+    """Remove explicit reasoning tags that some local models emit despite instructions."""
+    return _UNCLOSED_REASONING_BLOCK.sub("", _REASONING_BLOCK.sub("", text)).strip()
 
 
 class OpenAiCompatibleLlmClient:
@@ -33,7 +49,7 @@ class OpenAiCompatibleLlmClient:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(self.url, headers={"Authorization": f"Bearer {self.api_key}"}, json=payload)
                 response.raise_for_status()
-                text = str(response.json()["choices"][0]["message"]["content"]).strip()
+                text = strip_reasoning_blocks(str(response.json()["choices"][0]["message"]["content"]))
         except httpx.TimeoutException as exc:
             raise GatewayError(ErrorCode.LLM_UNAVAILABLE, "LLMがタイムアウトしました") from exc
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
